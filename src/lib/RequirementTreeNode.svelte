@@ -1,0 +1,338 @@
+<script>
+  import { createEventDispatcher } from 'svelte';
+  import { slide } from 'svelte/transition';
+
+  export let requirement;
+  export let level = 0;
+  export let activeId = null;
+  
+  const dispatch = createEventDispatcher();
+  
+  // State for expand/collapse
+  let expanded = true;
+  let isDragging = false;
+  let isOver = false;
+  let overPosition = 'middle'; // 'top', 'middle', or 'bottom'
+  
+  // Status badge colors
+  const statusColors = {
+    draft: 'bg-yellow-100 text-yellow-800',
+    review: 'bg-blue-100 text-blue-800',
+    approved: 'bg-green-100 text-green-800',
+    rejected: 'bg-red-100 text-red-800',
+    implemented: 'bg-purple-100 text-purple-800',
+    // Default color if status is not recognized
+    default: 'bg-gray-100 text-gray-800'
+  };
+  
+  // Get the CSS class for the current status
+  $: statusClass = statusColors[requirement.status?.toLowerCase()] || statusColors.default;
+  
+  // Add cursor information to clearly indicate draggable elements
+  $: dragHandleClass = isDragging ? 'cursor-grabbing' : 'cursor-grab';
+  
+  // Dynamic border classes when dragging over this element
+  $: borderClasses = isOver ? 
+    overPosition === 'middle' ? 'bg-blue-50 outline outline-2 outline-blue-400' :
+    'bg-white' : 'bg-white';
+  
+  // Handle clicks on the requirement
+  function handleClick(event) {
+    // If we're dragging, don't process the click
+    if (isDragging) return;
+    
+    // Dispatch the click event with the requirement
+    dispatch('click', requirement);
+  }
+  
+  // Toggle expanded state
+  function toggleExpanded(event) {
+    event.stopPropagation();
+    expanded = !expanded;
+  }
+  
+  // Add child requirement
+  function addChild(event) {
+    event.stopPropagation();
+    dispatch('addChild', requirement);
+  }
+  
+  // Show details panel
+  function showDetails(event) {
+    event.stopPropagation();
+    dispatch('showDetails', requirement);
+  }
+  
+  // Compute indent based on level (excluding the leftmost handle + expand area)
+  $: indentClass = `ml-${Math.min(level * 6, 24)}`;
+  
+  // Drag and drop handlers
+  function handleDragStart(event) {
+    event.stopPropagation();
+    isDragging = true;
+    
+    // Set the drag data
+    event.dataTransfer.setData('application/json', JSON.stringify({
+      id: requirement.id,
+      name: requirement.title || requirement.name,
+      level: level,
+      parentId: requirement.parentId
+    }));
+    
+    event.dataTransfer.effectAllowed = 'move';
+    
+    // Set dragImage to make dragging more visual
+    const dragEl = event.currentTarget.cloneNode(true);
+    dragEl.style.width = `${event.currentTarget.offsetWidth}px`;
+    dragEl.style.backgroundColor = 'white';
+    dragEl.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+    dragEl.style.position = 'absolute';
+    dragEl.style.top = '-1000px';
+    dragEl.style.opacity = '0.8';
+    document.body.appendChild(dragEl);
+    
+    event.dataTransfer.setDragImage(dragEl, 20, 20);
+    
+    // Cleanup the element after a short delay
+    setTimeout(() => {
+      document.body.removeChild(dragEl);
+    }, 100);
+    
+    // Notify parent that dragging has started
+    dispatch('dragstart');
+  }
+  
+  function handleDragEnd() {
+    // Use setTimeout to prevent the click event from firing immediately after drag ends
+    setTimeout(() => {
+      isDragging = false;
+    }, 100);
+    
+    // Notify parent that dragging has ended
+    dispatch('dragend');
+  }
+  
+  function handleDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (event.dataTransfer.types.includes('application/json')) {
+      // Cannot reliably access the data during dragover in all browsers
+      // Just check if we're dragging the proper type of data
+      
+      event.dataTransfer.dropEffect = 'move';
+      isOver = true;
+      
+      // Determine if we're at the top, middle, or bottom
+      const rect = event.currentTarget.getBoundingClientRect();
+      const y = event.clientY - rect.top;
+      
+      // Create clear zones: top 25%, middle 50%, bottom 25%
+      if (y < rect.height * 0.25) {
+        overPosition = 'top';
+      } else if (y > rect.height * 0.75) {
+        overPosition = 'bottom';
+      } else {
+        overPosition = 'middle';
+      }
+    }
+  }
+  
+  function handleDragLeave() {
+    isOver = false;
+  }
+  
+  function handleDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    isOver = false;
+    
+    if (event.dataTransfer.types.includes('application/json')) {
+      const data = JSON.parse(event.dataTransfer.getData('application/json'));
+      
+      // Don't allow dropping on self
+      if (data.id === requirement.id) {
+        return;
+      }
+      
+      // Dispatch the drop event with the source and target info
+      dispatch('drop', {
+        sourceId: data.id,
+        targetId: requirement.id,
+        position: overPosition
+      });
+    }
+  }
+
+  // Compute classes for drop indicators
+  $: dropIndicatorClasses = {
+    top: isOver && overPosition === 'top' ? 'drop-indicator-top active' : 'drop-indicator-top',
+    middle: isOver && overPosition === 'middle' ? 'drop-indicator-middle active' : 'drop-indicator-middle',
+    bottom: isOver && overPosition === 'bottom' ? 'drop-indicator-bottom active' : 'drop-indicator-bottom'
+  };
+</script>
+
+<div 
+  class="requirement-node flex py-2 hover:bg-gray-50 relative {borderClasses}"
+  class:active={activeId === requirement.id}
+  on:click={handleClick}
+  on:dragover={handleDragOver}
+  on:dragleave={handleDragLeave}
+  on:drop={handleDrop}
+>
+  <!-- Drop indicator for TOP position -->
+  <div class={dropIndicatorClasses.top}></div>
+  
+  <!-- Left area with drag handle and expand/collapse -->
+  <div class="flex-shrink-0 w-8 flex items-center justify-center">
+    <div 
+      class="h-5 w-5 flex items-center justify-center {dragHandleClass}" 
+      draggable="true"
+      on:dragstart={handleDragStart}
+      on:dragend={handleDragEnd}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M7 2a1 1 0 011 1v1h3a1 1 0 110 2H9v1a1 1 0 01-2 0V6H4a1 1 0 110-2h3V3a1 1 0 011-1zm0 8a1 1 0 011 1v1h8a1 1 0 110 2H8v1a1 1 0 01-2 0v-1H3a1 1 0 110-2h3v-1a1 1 0 011-1z" />
+      </svg>
+    </div>
+  </div>
+  
+  <!-- Expand/collapse toggle for items with children -->
+  <div class="flex-shrink-0 w-5 flex items-center {indentClass}">
+    {#if requirement.children && requirement.children.length > 0}
+      <button 
+        on:click={toggleExpanded} 
+        class="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-700 focus:outline-none"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform duration-200" class:rotate-90={expanded} viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+        </svg>
+      </button>
+    {/if}
+  </div>
+  
+  <!-- Requirement title and content area -->
+  <div class="flex-grow min-w-0 pr-4">
+    <div class="flex items-center">
+      <!-- Add the hierarchical path/ID back -->
+      {#if requirement.hierarchicalPath}
+        <span class="text-xs font-mono text-gray-500 mr-2">
+          {requirement.hierarchicalPath}
+        </span>
+      {/if}
+      <span class="text-sm font-medium text-gray-900 truncate">
+        {requirement.title || requirement.name}
+      </span>
+    </div>
+    {#if requirement.description}
+      <p class="mt-1 text-xs text-gray-500 truncate">
+        {requirement.description}
+      </p>
+    {/if}
+  </div>
+  
+  <!-- Status badge -->
+  <div class="flex-shrink-0 w-24 flex justify-center">
+    {#if requirement.status}
+      <span class="px-2 py-1 text-xs rounded-full whitespace-nowrap {statusClass}">
+        {requirement.status}
+      </span>
+    {/if}
+  </div>
+  
+  <!-- Actions area -->
+  <div class="flex-shrink-0 w-32 flex items-center justify-end pr-4 space-x-2">
+    <button 
+      on:click={showDetails}
+      class="h-7 w-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none"
+      title="View Details"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+        <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+      </svg>
+    </button>
+    
+    <button 
+      on:click={addChild}
+      class="h-7 w-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none"
+      title="Add Child"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
+      </svg>
+    </button>
+  </div>
+  
+  <!-- Drop indicator for MIDDLE position (showing as dashed border) -->
+  <div class={dropIndicatorClasses.middle}></div>
+  
+  <!-- Drop indicator for BOTTOM position -->
+  <div class={dropIndicatorClasses.bottom}></div>
+</div>
+
+<!-- Child requirements if expanded -->
+{#if expanded && requirement.children && requirement.children.length > 0}
+  <div class="children" transition:slide={{ duration: 200 }}>
+    {#each requirement.children as child}
+      <svelte:self 
+        requirement={child} 
+        level={level + 1} 
+        activeId={activeId}
+        on:click
+        on:addChild
+        on:showDetails
+        on:drop
+        on:dragstart
+        on:dragend
+      />
+    {/each}
+  </div>
+{/if}
+
+<style>
+  .requirement-node {
+    transition: background-color 0.2s, box-shadow 0.2s;
+  }
+  
+  .requirement-node.active {
+    background-color: #f0f7ff;
+    border-left: 3px solid #3b82f6;
+  }
+  
+  /* Styles for the drop indicators */
+  .drop-indicator-top, .drop-indicator-bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 6px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  
+  .drop-indicator-top {
+    top: -3px;
+  }
+  
+  .drop-indicator-bottom {
+    bottom: -3px;
+  }
+  
+  .drop-indicator-top.active, .drop-indicator-bottom.active {
+    background-color: #3b82f6;
+    border-radius: 3px;
+  }
+  
+  .drop-indicator-middle {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 2px dashed transparent;
+    border-radius: 4px;
+    z-index: 5;
+  }
+  
+  .drop-indicator-middle.active {
+    border-color: #3b82f6;
+  }
+</style>
