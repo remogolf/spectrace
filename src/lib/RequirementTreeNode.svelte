@@ -5,7 +5,8 @@
   export let requirement;
   export let level = 0;
   export let activeId = null;
-  
+  export let dropPreview = null;
+
   const dispatch = createEventDispatcher();
   
   // State for expand/collapse
@@ -116,30 +117,49 @@
     event.preventDefault();
     event.stopPropagation();
     
-    if (event.dataTransfer.types.includes('application/json')) {
-      // Cannot reliably access the data during dragover in all browsers
-      // Just check if we're dragging the proper type of data
-      
-      event.dataTransfer.dropEffect = 'move';
+    // We can't rely on getData during dragover, so we need to use the dropPreview
+    if (!dropPreview?.sourceId) {
+      return; // No active drag operation or source ID
+    }
+    
+    // Prevent dropping onto itself
+    if (dropPreview.sourceId === requirement.id) {
+      event.dataTransfer.dropEffect = 'none';
+      return;
+    }
+    
+    event.dataTransfer.dropEffect = 'move';
+    
+    // Calculate position logic
+    const rect = event.currentTarget.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    let newOverPosition = 'middle';
+    
+    // More precise zones for better usability
+    if (y < rect.height * 0.25) {
+      newOverPosition = 'top';
+    } else if (y > rect.height * 0.75) {
+      newOverPosition = 'bottom';
+    }
+    
+    // Only update if changed to reduce flicker
+    if (!isOver || overPosition !== newOverPosition) {
       isOver = true;
+      overPosition = newOverPosition;
       
-      // Determine if we're at the top, middle, or bottom
-      const rect = event.currentTarget.getBoundingClientRect();
-      const y = event.clientY - rect.top;
-      
-      // Create clear zones: top 25%, middle 50%, bottom 25%
-      if (y < rect.height * 0.25) {
-        overPosition = 'top';
-      } else if (y > rect.height * 0.75) {
-        overPosition = 'bottom';
-      } else {
-        overPosition = 'middle';
-      }
+      // Emit dropPreview event to parent component
+      dispatch('dropPreview', {
+        sourceId: dropPreview.sourceId,
+        targetId: requirement.id,
+        position: overPosition,
+        parentId: requirement.parentId
+      });
     }
   }
   
   function handleDragLeave() {
     isOver = false;
+    dispatch('clearDropPreview');
   }
   
   function handleDrop(event) {
@@ -164,38 +184,55 @@
     }
   }
 
+  // Forwarding dropPreview and clearDropPreview events to the parent
+  function handleDropPreview(event) {
+    dispatch('dropPreview', event.detail);
+  }
+  
+  function handleClearDropPreview() {
+    dispatch('clearDropPreview');
+  }
+
   // Compute classes for drop indicators
   $: dropIndicatorClasses = {
     top: isOver && overPosition === 'top' ? 'drop-indicator-top active' : 'drop-indicator-top',
     middle: isOver && overPosition === 'middle' ? 'drop-indicator-middle active' : 'drop-indicator-middle',
     bottom: isOver && overPosition === 'bottom' ? 'drop-indicator-bottom active' : 'drop-indicator-bottom'
   };
+
+  // Add a visible drag handle icon and tooltip
+  const dragHandleIcon = `<svg width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg"><g stroke="#6B7280" stroke-width="2" stroke-linecap="round"><path d="M5 4h.01M5 8h.01M5 12h.01M11 4h.01M11 8h.01M11 12h.01"/></g></svg>`;
 </script>
 
 <div 
-  class="requirement-node flex py-2 hover:bg-gray-50 relative {borderClasses}"
+  role="button"
+  class="requirement-node flex py-2 hover:bg-gray-50 relative {borderClasses} {isDragging ? 'dragging' : ''} {dropPreview && dropPreview.targetId === requirement.id && dropPreview.position === 'middle' ? 'drop-preview-nest' : ''}"
   class:active={activeId === requirement.id}
   on:click={handleClick}
+  on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e); }}
   on:dragover={handleDragOver}
   on:dragleave={handleDragLeave}
   on:drop={handleDrop}
+  aria-dropeffect="move"
+  aria-label="Requirement {requirement.title || requirement.name}"
+  tabindex="0"
 >
-  <!-- Drop indicator for TOP position -->
+  <!-- Drop indicators with improved visibility and labels -->
   <div class={dropIndicatorClasses.top}></div>
   
-  <!-- Left area with drag handle and expand/collapse -->
-  <div class="flex-shrink-0 w-8 flex items-center justify-center">
-    <div 
-      class="h-5 w-5 flex items-center justify-center {dragHandleClass}" 
-      draggable="true"
-      on:dragstart={handleDragStart}
-      on:dragend={handleDragEnd}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-        <path d="M7 2a1 1 0 011 1v1h3a1 1 0 110 2H9v1a1 1 0 01-2 0V6H4a1 1 0 110-2h3V3a1 1 0 011-1zm0 8a1 1 0 011 1v1h8a1 1 0 110 2H8v1a1 1 0 01-2 0v-1H3a1 1 0 110-2h3v-1a1 1 0 011-1z" />
-      </svg>
-    </div>
-  </div>
+  <div class={dropIndicatorClasses.middle}></div>
+  
+  <div class={dropIndicatorClasses.bottom}></div>
+  
+  {#if isOver && overPosition === 'middle' || (dropPreview && dropPreview.targetId === requirement.id && dropPreview.position === 'middle')}
+    <div class="drop-preview-nest-label" transition:slide>Nest inside</div>
+  {/if}
+  {#if isOver && overPosition === 'top' || (dropPreview && dropPreview.targetId === requirement.id && dropPreview.position === 'top')}
+    <div class="drop-preview-bar-label top-label" transition:slide>Move above</div>
+  {/if}
+  {#if isOver && overPosition === 'bottom' || (dropPreview && dropPreview.targetId === requirement.id && dropPreview.position === 'bottom')}
+    <div class="drop-preview-bar-label bottom-label" transition:slide>Move below</div>
+  {/if}
   
   <!-- Expand/collapse toggle for items with children -->
   <div class="flex-shrink-0 w-5 flex items-center {indentClass}">
@@ -203,6 +240,7 @@
       <button 
         on:click={toggleExpanded} 
         class="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-700 focus:outline-none"
+        aria-label={expanded ? 'Collapse children' : 'Expand children'}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform duration-200" class:rotate-90={expanded} viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
@@ -246,6 +284,7 @@
       on:click={showDetails}
       class="h-7 w-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none"
       title="View Details"
+      aria-label="View Details"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
         <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
@@ -257,18 +296,13 @@
       on:click={addChild}
       class="h-7 w-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none"
       title="Add Child"
+      aria-label="Add Child"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
       </svg>
     </button>
   </div>
-  
-  <!-- Drop indicator for MIDDLE position (showing as dashed border) -->
-  <div class={dropIndicatorClasses.middle}></div>
-  
-  <!-- Drop indicator for BOTTOM position -->
-  <div class={dropIndicatorClasses.bottom}></div>
 </div>
 
 <!-- Child requirements if expanded -->
@@ -285,6 +319,8 @@
         on:drop
         on:dragstart
         on:dragend
+        on:dropPreview={handleDropPreview}
+        on:clearDropPreview={handleClearDropPreview}
       />
     {/each}
   </div>
@@ -300,39 +336,103 @@
     border-left: 3px solid #3b82f6;
   }
   
-  /* Styles for the drop indicators */
+  .requirement-node.dragging {
+    opacity: 0.7;
+    transform: scale(0.98);
+    box-shadow: 0 4px 16px 0 rgba(59, 130, 246, 0.15);
+    z-index: 20;
+    transition: opacity 0.15s, transform 0.15s, box-shadow 0.15s;
+  }
+  
+  /* Enhanced drop indicators */
   .drop-indicator-top, .drop-indicator-bottom {
     position: absolute;
     left: 0;
     right: 0;
-    height: 6px;
+    height: 4px;
+    background-color: #3b82f6;
+    border-radius: 2px;
     pointer-events: none;
     z-index: 10;
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.5);
   }
   
   .drop-indicator-top {
-    top: -3px;
+    top: -2px;
   }
   
   .drop-indicator-bottom {
-    bottom: -3px;
+    bottom: -2px;
   }
   
   .drop-indicator-top.active, .drop-indicator-bottom.active {
     background-color: #3b82f6;
-    border-radius: 3px;
   }
   
   .drop-indicator-middle {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    border: 2px dashed transparent;
+    border: 2px dashed #3b82f6;
     border-radius: 4px;
     z-index: 5;
+    background-color: rgba(59, 130, 246, 0.08);
   }
   
   .drop-indicator-middle.active {
     border-color: #3b82f6;
+    background-color: rgba(59, 130, 246, 0.12);
+  }
+  
+  .drop-preview-nest {
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    background: rgba(79, 70, 229, 0.06);
+    position: relative;
+  }
+  
+  .drop-preview-nest-label {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background: #4f46e5;
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8em;
+    pointer-events: none;
+    z-index: 30;
+    opacity: 0.95;
+    box-shadow: 0 2px 8px 0 rgba(99,102,241,0.25);
+    white-space: nowrap;
+  }
+
+  .drag-handle {
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+  .group:hover .drag-handle, .drag-handle:focus {
+    opacity: 1;
+  }
+  .drop-preview-bar-label {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translate(-50%, -120%);
+    background: #3b82f6;
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8em;
+    pointer-events: none;
+    z-index: 30;
+    opacity: 0.95;
+    box-shadow: 0 2px 8px 0 rgba(59,130,246,0.25);
+    white-space: nowrap;
+  }
+  .drop-preview-bar-label:last-of-type {
+    top: auto;
+    bottom: 0;
+    transform: translate(-50%, 120%);
   }
 </style>

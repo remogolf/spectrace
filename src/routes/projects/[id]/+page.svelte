@@ -35,8 +35,16 @@
   const projectId = $page.params.id;
 
   onMount(() => {
+    let loadingTimeout = setTimeout(() => {
+      if (loading) {
+        error = 'Loading timed out. Please check your connection or permissions.';
+        loading = false;
+      }
+    }, 10000); // 10 seconds
+
     const authUnsubscribe = onAuthStateChanged(auth, async (userData) => {
       if (!userData) {
+        loading = false;
         goto('/login');
         return;
       }
@@ -52,6 +60,7 @@
         if (!project) {
           error = "Project not found";
           loading = false;
+          clearTimeout(loadingTimeout);
           return;
         }
         
@@ -70,21 +79,25 @@
             ...doc.data()
           }));
           loading = false;
+          clearTimeout(loadingTimeout);
         }, (err) => {
           console.error('Snapshot error:', err);
           error = `Error loading requirements: ${err.message}`;
           loading = false;
+          clearTimeout(loadingTimeout);
         });
       } catch (err) {
         console.error('Error loading project:', err);
         error = err.message;
         loading = false;
+        clearTimeout(loadingTimeout);
       }
     });
 
     return () => {
       authUnsubscribe();
       if (unsubscribe) unsubscribe();
+      clearTimeout(loadingTimeout);
     };
   });
 
@@ -123,11 +136,20 @@
     .filter(Boolean)
   ));
 
-  async function selectRequirement(req) {
-    selectedRequirement = req;
-    await tick();
-    isDetailsVisible = true;
-    isFullscreenDetails = false; // Reset to split view when selecting a new requirement
+  async function selectRequirement(reqOrId) {
+    // Handle both cases - when passed a requirement ID (string) or a requirement object
+    const reqId = typeof reqOrId === 'string' ? reqOrId : reqOrId?.id;
+    
+    if (!reqId) return;
+    
+    // Find the requirement by ID
+    const req = requirements.find(r => r.id === reqId);
+    if (req) {
+      selectedRequirement = req;
+      await tick();
+      isDetailsVisible = true;
+      isFullscreenDetails = false; // Reset to split view when selecting a new requirement
+    }
   }
 
   function closeDetails() {
@@ -326,10 +348,15 @@
               loading={loading}
               userId={user?.uid}
               projectId={projectId}
+              isCreatingRequirement={isCreatingRequirement}
+              newRequirementParentId={newRequirementParentId}
+              newRequirementTitle={newRequirementTitle}
               on:selectRequirement={(event) => selectRequirement(event.detail)}
               on:showDetails={(event) => selectRequirement(event.detail)}
               on:addChild={(event) => startNewRequirement(event.detail)}
               on:addRoot={() => startNewRequirement(null)}
+              on:cancelNewRequirement={cancelNewRequirement}
+              on:createNewRequirement={createNewRequirement}
               on:requirementMoved={handleRequirementMoved}
             />
             
